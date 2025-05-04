@@ -1,0 +1,155 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: AIGateway
+metadata:
+  name: financial-advisor-gateway
+spec:
+  listeners:
+    - name: main
+      port: 9000
+      protocol: http
+  rateLimits:
+    - name: token-based-limit
+      # Set token limits for different API providers
+      tokenLimits:
+        - provider: openai
+          inputTokensPerSecond: 5000
+          outputTokensPerSecond: 2500
+        - provider: anthropic
+          inputTokensPerSecond: 5000
+          outputTokensPerSecond: 2500
+        - provider: google
+          inputTokensPerSecond: 5000
+          outputTokensPerSecond: 2500
+        - provider: ollama
+          inputTokensPerSecond: 10000
+          outputTokensPerSecond: 5000
+  routes:
+    - name: investment-advisor-ollama
+      matches:
+        - path: /v1/investment-local
+      backends:
+        - name: ollama-investment-backend
+          priority: 1
+          provider:
+            ollama:
+              model: llama3-8b
+              temperature: 0.3
+              maxOutputTokens: 1024
+              endpoint: "http://ollama:11434/api/generate"
+        - name: openai-investment-backend
+          priority: 2
+          provider:
+            openai:
+              model: gpt-4-1106-preview
+              temperature: 0.3
+              maxOutputTokens: 1024
+    
+    - name: loan-calculator-ollama
+      matches:
+        - path: /v1/loan-local
+      backends:
+        - name: ollama-calculation-backend
+          priority: 1
+          provider:
+            ollama:
+              model: llama3-8b
+              temperature: 0.1
+              maxOutputTokens: 512
+              endpoint: "http://ollama:11434/api/generate"
+    
+    - name: customer-service-ollama
+      matches:
+        - path: /v1/customer-local
+      backends:
+        - name: ollama-service-backend
+          priority: 1
+          provider:
+            ollama:
+              model: mistral-7b
+              temperature: 0.7
+              maxOutputTokens: 1024
+              endpoint: "http://ollama:11434/api/generate"
+    
+    # Keep the original cloud-based routes
+    - name: investment-advisor
+      matches:
+        - path: /v1/investment
+      backends:
+        - name: openai-investment-backend
+          priority: 1
+          provider:
+            openai:
+              model: gpt-4-1106-preview
+              temperature: 0.3
+              maxOutputTokens: 1024
+        - name: anthropic-investment-backend
+          priority: 2
+          provider:
+            anthropic:
+              model: claude-3-opus-20240229
+              temperature: 0.3
+              maxOutputTokens: 1024
+    
+    - name: loan-calculator
+      matches:
+        - path: /v1/loan
+      backends:
+        - name: openai-calculation-backend
+          priority: 1
+          provider:
+            openai:
+              model: gpt-4-1106-preview
+              temperature: 0.1
+              maxOutputTokens: 512
+    
+    - name: customer-service
+      matches:
+        - path: /v1/customer
+      backends:
+        - name: anthropic-service-backend
+          priority: 1
+          provider:
+            anthropic:
+              model: claude-3-sonnet-20240229
+              temperature: 0.7
+              maxOutputTokens: 1024
+    
+    - name: default-route
+      matches:
+        - path: /v1/*
+      backends:
+        - name: default-backend
+          priority: 1
+          provider:
+            ollama:
+              model: llama3-8b
+              temperature: 0.4
+              maxOutputTokens: 1024
+              endpoint: "http://ollama:11434/api/generate"
+  
+  observability:
+    logging:
+      level: info
+      format: json
+      destination:
+        stdout: {}
+    metrics:
+      prometheus:
+        scrape: true
+        path: /metrics
+        port: 9901
+  
+  security:
+    cors:
+      allowOrigins:
+        - "http://localhost:8501"  # Streamlit app
+      allowMethods:
+        - GET
+        - POST
+      allowHeaders:
+        - Authorization
+        - Content-Type
+      exposeHeaders:
+        - X-RateLimit-Limit
+        - X-RateLimit-Remaining
+      maxAge: 86400

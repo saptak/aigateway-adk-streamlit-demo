@@ -16,6 +16,24 @@ services:
     networks:
       - ai-gateway-network
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - ai-gateway-network
+
   streamlit:
     build:
       context: .
@@ -30,6 +48,7 @@ services:
       - PYTHONPATH=/app
     depends_on:
       - envoy
+      - ollama
     networks:
       - ai-gateway-network
     restart: unless-stopped
@@ -54,3 +73,6 @@ services:
 networks:
   ai-gateway-network:
     driver: bridge
+
+volumes:
+  ollama-models:

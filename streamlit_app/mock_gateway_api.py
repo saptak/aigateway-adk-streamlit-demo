@@ -44,23 +44,38 @@ MODELS = {
         {"name": "gpt-4-1106-preview", "provider": "openai", "latency_range": (0.8, 1.5)},
         {"name": "claude-3-opus-20240229", "provider": "anthropic", "latency_range": (0.9, 1.7)}
     ],
+    "investment-local": [
+        {"name": "llama3-8b", "provider": "ollama", "latency_range": (0.3, 0.8)},
+        {"name": "mistral-7b", "provider": "ollama", "latency_range": (0.2, 0.7)}
+    ],
     "loan": [
         {"name": "gpt-4-1106-preview", "provider": "openai", "latency_range": (0.5, 1.2)}
     ],
+    "loan-local": [
+        {"name": "llama3-8b", "provider": "ollama", "latency_range": (0.2, 0.6)},
+        {"name": "phi-2", "provider": "ollama", "latency_range": (0.1, 0.5)}
+    ],
     "customer": [
         {"name": "claude-3-sonnet-20240229", "provider": "anthropic", "latency_range": (0.7, 1.3)}
+    ],
+    "customer-local": [
+        {"name": "mistral-7b", "provider": "ollama", "latency_range": (0.2, 0.7)},
+        {"name": "solar-10.7b", "provider": "ollama", "latency_range": (0.3, 0.9)}
     ],
     "general": [
         {"name": "gemini-1.5-pro", "provider": "google", "latency_range": (0.6, 1.1)}
     ]
 }
 
+# Ollama models
+OLLAMA_MODELS = ["llama3-8b", "mistral-7b", "phi-2", "codellama-7b", "solar-10.7b"]
+
 def simulate_token_count(text: str) -> int:
     """Estimate token count from text"""
     # Rough approximation: 1 token ≈ 4 characters
     return len(text) // 4
 
-def get_mock_response(route: str, prompt: str, demo_modes: List[str]) -> Dict[str, Any]:
+def get_mock_response(route: str, prompt: str, demo_modes: List[str], custom_model: str = None) -> Dict[str, Any]:
     """
     Generate a mock response as if it came from the Envoy AI Gateway.
     
@@ -68,6 +83,7 @@ def get_mock_response(route: str, prompt: str, demo_modes: List[str]) -> Dict[st
         route: API route (/v1/investment, /v1/loan, etc.)
         prompt: User's prompt text
         demo_modes: Enabled demo features
+        custom_model: Optional specific model to use (for Ollama)
         
     Returns:
         Dict containing the mocked API response
@@ -76,18 +92,29 @@ def get_mock_response(route: str, prompt: str, demo_modes: List[str]) -> Dict[st
     query_type = route.split("/")[-1]
     
     # Select appropriate response set
-    if query_type == "investment":
+    if "investment" in query_type:
         responses = INVESTMENT_RESPONSES
-        model_info = random.choice(MODELS["investment"])
-    elif query_type == "loan":
+        model_category = "investment-local" if "local" in query_type else "investment"
+        model_info = random.choice(MODELS[model_category])
+    elif "loan" in query_type:
         responses = LOAN_RESPONSES
-        model_info = random.choice(MODELS["loan"])
-    elif query_type == "customer":
+        model_category = "loan-local" if "local" in query_type else "loan"
+        model_info = random.choice(MODELS[model_category])
+    elif "customer" in query_type:
         responses = CUSTOMER_SERVICE_RESPONSES
-        model_info = random.choice(MODELS["customer"])
+        model_category = "customer-local" if "local" in query_type else "customer"
+        model_info = random.choice(MODELS[model_category])
     else:
         responses = GENERAL_RESPONSES
         model_info = random.choice(MODELS["general"])
+    
+    # Override model if custom model specified (for Ollama)
+    if custom_model and custom_model in OLLAMA_MODELS:
+        model_info = {
+            "name": custom_model,
+            "provider": "ollama",
+            "latency_range": (0.2, 0.8)  # Generic latency range for local models
+        }
     
     # Select a response
     response_text = random.choice(responses)
@@ -105,8 +132,9 @@ def get_mock_response(route: str, prompt: str, demo_modes: List[str]) -> Dict[st
     # Simulate rate limiting if enabled
     rate_limited = False
     if "Rate Limiting" in demo_modes:
-        # 10% chance of rate limiting
-        rate_limited = random.random() < 0.1
+        # 10% chance of rate limiting for cloud models, 3% for local models
+        rate_limit_chance = 0.03 if model_info["provider"] == "ollama" else 0.1
+        rate_limited = random.random() < rate_limit_chance
     
     if rate_limited:
         return {
@@ -119,11 +147,13 @@ def get_mock_response(route: str, prompt: str, demo_modes: List[str]) -> Dict[st
     used_fallback = False
     original_model = model_info["name"]
     if "Model Fallback" in demo_modes:
-        # 15% chance of fallback
-        used_fallback = random.random() < 0.15
+        # 15% chance of fallback for cloud models, 5% for local models
+        fallback_chance = 0.05 if model_info["provider"] == "ollama" else 0.15
+        used_fallback = random.random() < fallback_chance
         if used_fallback:
             # Select a different model as fallback
-            fallback_options = [m for m in MODELS[query_type] if m["name"] != original_model]
+            model_key = model_category if model_category in MODELS else query_type
+            fallback_options = [m for m in MODELS[model_key] if m["name"] != original_model]
             if fallback_options:
                 model_info = random.choice(fallback_options)
     

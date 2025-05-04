@@ -58,6 +58,20 @@ st.markdown("""
         border-left: 5px solid #F59E0B;
         margin-bottom: 20px;
     }
+    .model-tag {
+        background-color: #E0F2FE;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        margin-right: 5px;
+    }
+    .local-model-tag {
+        background-color: #DCFCE7;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        margin-right: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,18 +96,56 @@ with st.sidebar:
     
     st.markdown("### Configure Demo")
     
+    # Model deployment options
+    model_deployment = st.radio(
+        "Model Deployment",
+        ["Cloud APIs", "Local (Ollama)"],
+        index=0,
+        help="Choose between cloud API models or locally deployed models using Ollama"
+    )
+    
+    # Query type selection
     query_type = st.radio(
         "What type of query do you want to make?",
         ["Investment Advice", "Loan Calculator", "Customer Service", "General Query"]
     )
     
-    # Map query type to API routes
-    route_mapping = {
-        "Investment Advice": "/v1/investment",
-        "Loan Calculator": "/v1/loan",
-        "Customer Service": "/v1/customer",
-        "General Query": "/v1/general"
-    }
+    # Map query type to API routes based on deployment choice
+    route_mapping = {}
+    
+    if model_deployment == "Cloud APIs":
+        route_mapping = {
+            "Investment Advice": "/v1/investment",
+            "Loan Calculator": "/v1/loan",
+            "Customer Service": "/v1/customer",
+            "General Query": "/v1/general"
+        }
+    else:  # Local (Ollama)
+        route_mapping = {
+            "Investment Advice": "/v1/investment-local",
+            "Loan Calculator": "/v1/loan-local",
+            "Customer Service": "/v1/customer-local",
+            "General Query": "/v1/general"
+        }
+    
+    # Local model selection when Ollama is selected
+    if model_deployment == "Local (Ollama)":
+        local_model = st.selectbox(
+            "Select local model",
+            ["llama3-8b", "mistral-7b", "phi-2", "codellama-7b", "solar-10.7b"],
+            index=0,
+            help="Choose which Ollama model to use locally"
+        )
+        
+        st.info("""
+        **Using Local Models**
+        
+        Make sure you have the selected models pulled in Ollama:
+        ```
+        ollama pull llama3-8b
+        ollama pull mistral-7b
+        ```
+        """)
     
     st.markdown("### Demo Features")
     demo_modes = st.multiselect(
@@ -116,6 +168,12 @@ with st.sidebar:
 # Main content
 st.markdown('<p class="main-header">Financial Advisor AI Gateway Demo</p>', unsafe_allow_html=True)
 
+# Show model deployment info
+if model_deployment == "Cloud APIs":
+    st.markdown('<div class="info-box">Using cloud API models (OpenAI, Anthropic, Google)</div>', unsafe_allow_html=True)
+else:
+    st.markdown(f'<div class="info-box">Using local models with Ollama (Selected: {local_model})</div>', unsafe_allow_html=True)
+
 # Show feature info box based on selected demo mode
 if demo_modes:
     features_text = ", ".join(demo_modes)
@@ -132,7 +190,13 @@ with col1:
         if message["role"] == "user":
             st.markdown(f'<div class="chat-message user-message">{message["content"]}</div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="chat-message ai-message">{message["content"]}</div>', unsafe_allow_html=True)
+            # Check if model info is available to display model tag
+            model_tag = ""
+            if "model" in message:
+                tag_class = "local-model-tag" if "llama" in message["model"] or "mistral" in message["model"] or "phi" in message["model"] else "model-tag"
+                model_tag = f'<span class="{tag_class}">{message["model"]}</span>'
+            
+            st.markdown(f'<div class="chat-message ai-message">{model_tag}{message["content"]}</div>', unsafe_allow_html=True)
     
     # Chat input
     user_query = st.text_input("Ask a financial question:", key="user_input")
@@ -145,6 +209,16 @@ with col1:
         current_route = route_mapping[query_type]
         st.session_state.last_route = current_route
         
+        # Prepare payload
+        payload = {
+            "prompt": user_query, 
+            "demo_modes": demo_modes
+        }
+        
+        # Add model specification if using Ollama
+        if model_deployment == "Local (Ollama)":
+            payload["model"] = local_model
+        
         # Record start time for latency tracking
         start_time = time.time()
         
@@ -156,7 +230,7 @@ with col1:
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {API_KEY}"
                 },
-                json={"prompt": user_query, "demo_modes": demo_modes}
+                json=payload
             )
             
             # Calculate latency
@@ -171,13 +245,19 @@ with col1:
                 st.session_state.token_usage["output"] += token_usage.get("output_tokens", 0)
                 
                 # Add response to chat
-                st.session_state.messages.append({"role": "assistant", "content": result["response"]})
+                assistant_message = {
+                    "role": "assistant", 
+                    "content": result["response"],
+                    "model": result.get("model", "unknown")
+                }
+                st.session_state.messages.append(assistant_message)
                 
                 # Record request history
                 st.session_state.request_history.append({
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
                     "request_type": query_type,
                     "model": result.get("model", "unknown"),
+                    "deployment": "Local" if model_deployment == "Local (Ollama)" else "Cloud",
                     "latency": round(latency, 2),
                     "input_tokens": token_usage.get("input_tokens", 0),
                     "output_tokens": token_usage.get("output_tokens", 0)
@@ -192,6 +272,7 @@ with col1:
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
                     "request_type": query_type,
                     "model": "error",
+                    "deployment": "Local" if model_deployment == "Local (Ollama)" else "Cloud",
                     "latency": round(latency, 2),
                     "input_tokens": 0,
                     "output_tokens": 0
@@ -265,7 +346,26 @@ with col2:
         
         df = pd.DataFrame(st.session_state.request_history)
         
-        if not df.empty:
+        if not df.empty and len(df) > 1:
+            # Add deployment visualization
+            deployment_counts = df["deployment"].value_counts().reset_index()
+            deployment_counts.columns = ["Deployment", "Count"]
+            
+            fig = go.Figure(data=[go.Pie(
+                labels=deployment_counts["Deployment"],
+                values=deployment_counts["Count"],
+                hole=.4,
+                marker_colors=['#10B981', '#3B82F6']
+            )])
+            
+            fig.update_layout(
+                height=300,
+                margin=dict(l=20, r=20, t=40, b=20),
+                title="Cloud vs Local Deployments"
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
             # Count request types
             request_counts = df["request_type"].value_counts().reset_index()
             request_counts.columns = ["Request Type", "Count"]
@@ -280,6 +380,7 @@ with col2:
             fig.update_layout(
                 height=300,
                 margin=dict(l=20, r=20, t=40, b=20),
+                title="Request Types"
             )
             
             st.plotly_chart(fig, use_container_width=True)
